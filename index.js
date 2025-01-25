@@ -1,9 +1,17 @@
 const express = require('express');
+const path = require('path');
 const app = express();
 const port = 3000;
 
-
+// Middleware
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: 'Something went wrong!' });
+});
 
 class MessageBuffer {
     constructor(){
@@ -87,7 +95,7 @@ async function createNotificationPrompt(messages){
     }
 }
 
-app.post("/webhook", (req,res) => {
+app.post("/webhook", async (req,res) => {
     const data = req.body;
     const sessionId = data.sessionId;
     const segments = data.segments || [];
@@ -107,28 +115,31 @@ app.post("/webhook", (req,res) => {
                 const wordsInSegment = text.split(/\s+/).length;
                 buffer.wordsAfterSilence += wordsInSegment;
 
-                if(bufferData.wordsAfterSilence >= messageBuffer.minWordsAfterSilence){
+                if(buffer.wordsAfterSilence >= messageBuffer.minWordsAfterSilence){
                     buffer.silenceDetected = false;
-                    bufferData.lastAnalysisTime = currentTime;
+                    buffer.lastAnalysisTime = currentTime;
                 }
             }
         }
     }
 
-    const timeSinceLastAnalysis = currentTime - buffer.lastAnalysisTime;
-    if(timeSinceLastAnalysis >= ANALYSIS_INTERVAL && bufferData.message.length > 0 && !bufferData.silenceDetected){
-        const sortedMessages = bufferData.message.sort((a,b) => a.timestamp - b.timestamp);
-        if(sortedMessages.some((msg) => /[jhy]arvis/.test(msg.text.toLowerCase()))) {
-            const notification = createNotificationPrompt(sortedMessages);
-            bufferData.lastAnalysisTime = currentTime;
-            bufferData.messages = [];
+    try {
+        const timeSinceLastAnalysis = currentTime - buffer.lastAnalysisTime;
+        if(timeSinceLastAnalysis >= ANALYSIS_INTERVAL && buffer.messages.length > 0 && !buffer.silenceDetected){
+            const sortedMessages = buffer.messages.sort((a,b) => a.timestamp - b.timestamp);
+            if(sortedMessages.some((msg) => /[jhy]arvis/.test(msg.text.toLowerCase()))) {
+                const notification = await createNotificationPrompt(sortedMessages);
+                buffer.lastAnalysisTime = currentTime;
+                buffer.messages = [];
 
-            return res.status(200).json(notification);
-        }else{
-            return res.status(200).json({});
+                return res.status(200).json(notification);
+            }
         }
+        return res.status(200).json({});
+    } catch (error) {
+        console.error('Error processing webhook:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
-    return res.status(202).json({});
 })
 
 app.listen(port, () => {
